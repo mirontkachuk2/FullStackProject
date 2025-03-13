@@ -32,20 +32,20 @@ app.use(express.json());
  * @auth Required
  */
 app.get("/tasks", authenticate, async (req: Request, res: Response) => {
+    logger.info("Processing task get request");
     try {
         const userId = req.user?.uid;
         if (!userId) return res.status(403).json({ error: "Unauthorized" });
         
-        logger.info(`Fetching tasks for user: ${userId}`);
         const snapshot = await db.collection("tasks").where("userId", "==", userId).get();
         
-        logger.info(`Firestore returned ${snapshot.size} tasks`);
         const tasks = snapshot.docs.map(doc => ({ 
             id: doc.id,
             ...doc.data(), 
             //createdAt: formatFirestoreTimestamp((doc.data().createdAt).toDate())
         }));
 
+        logger.info(`Returned tasks for user: ${userId}`);
         return res.json({ tasks });
     } catch (error) {
         logger.error("Error fetching tasks:", error);
@@ -61,13 +61,11 @@ app.get("/tasks", authenticate, async (req: Request, res: Response) => {
  * @auth Required
  */
 app.post("/tasks", authenticate, async (req: Request, res: Response) => {
+    logger.info("Processing task post request");
     try {
         const { title } = req.body;
         const userId = req.user?.uid;
-        
-        if (!title) {
-            return res.status(400).json({ error: "Title is required" });
-        }
+        if (!userId) return res.status(403).json({ error: "Unauthorized" });
 
         const userTasksRef = db.collection("tasks").where("userId", "==", userId);
         const snapshot = await userTasksRef.get();
@@ -101,6 +99,7 @@ app.post("/tasks", authenticate, async (req: Request, res: Response) => {
  * @auth Required
  */
 app.delete("/tasks/:id", authenticate, async (req: Request, res: Response) => {
+    logger.info("Processing task delete request");
     try {
         const { id } = req.params;
         const userId = req.user?.uid;
@@ -136,10 +135,10 @@ app.delete("/tasks/:id", authenticate, async (req: Request, res: Response) => {
  */
 app.patch("/tasks/order", authenticate, async (req: Request, res: Response) => {
     logger.info("Processing task reordering request");
-
     try {
         const { tasks } = req.body;
-        logger.info(`Received ${tasks?.length || 0} tasks to reorder`);
+        const userId = req.user?.uid;
+        if (!userId) return res.status(403).json({ error: "Unauthorized" });
 
         if (!Array.isArray(tasks) || tasks.some(task => typeof task.position !== "number" || task.position < 0)) {
             logger.error("Invalid task positions:", JSON.stringify(tasks, null, 2));
@@ -152,7 +151,6 @@ app.patch("/tasks/order", authenticate, async (req: Request, res: Response) => {
 
         for (const task of tasks) {
             const taskRef = db.collection("tasks").doc(task.id);
-            logger.debug(`Checking task existence: ${task.id}`);
 
             const taskSnapshot = await taskRef.get();
             if (!taskSnapshot.exists) {
@@ -161,14 +159,12 @@ app.patch("/tasks/order", authenticate, async (req: Request, res: Response) => {
                 continue;
             }
 
-            logger.debug(`Updating position: ${task.id} -> ${task.position}`);
             batch.update(taskRef, { position: task.position });
             updatedCount++;
         }
 
         await batch.commit();
-        logger.info(`Successfully updated ${updatedCount} tasks`);
-
+        logger.info(`Reordered tasks for user: ${userId}`);
         return res.json({
             success: true,
         });
@@ -186,6 +182,7 @@ app.patch("/tasks/order", authenticate, async (req: Request, res: Response) => {
  * @auth Required
  */
 app.patch("/tasks/:id", authenticate, async (req: Request, res: Response) => {
+    logger.info("Updating task request");
     try {
         const { id } = req.params;
         const { completed } = req.body;
@@ -204,12 +201,12 @@ app.patch("/tasks/:id", authenticate, async (req: Request, res: Response) => {
         }
 
         await taskRef.update({ completed });
-        logger.info(`Updated task ${id} completion status to: ${completed}`);
 
         // Fetch the updated task after updating
         const updatedTaskSnapshot = await taskRef.get();
         const updatedTask = updatedTaskSnapshot.data();
 
+        logger.info(`Deleted task ${id}`);
         return res.json({ success: true, updatedTask });
     } catch (error) {
         logger.error("Error updating task:", error);
@@ -224,13 +221,11 @@ app.patch("/tasks/:id", authenticate, async (req: Request, res: Response) => {
  * @route POST /tasks/generateTaskImage
  */
 app.post("/tasks/generateTaskImage", async (req: Request, res: Response) => {
+    logger.info("Processing image generation request");
     try {
-        logger.info("Processing image generation request");
         const { taskTitle } = req.body;
-        
-        if (!taskTitle) {
-            return res.status(400).json({ error: "Task title is required" });
-        }
+        const userId = req.user?.uid;
+        if (!userId) return res.status(403).json({ error: "Unauthorized" });
 
         const existingImage = await db
             .collection("task_images")
